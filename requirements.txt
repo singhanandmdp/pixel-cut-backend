@@ -1,7 +1,11 @@
-flask
-flask-cors
+fastapi
+uvicorn
 pillow
-gunicorn
-rembg[cpu]
-onnxruntime
-onnxruntime-gpu
+opencv-python-headless
+numpy
+torch
+torchvision
+realesrgan
+basicsr
+facexlib
+gfpgan
