@@ -1,79 +1,57 @@
+from fastapi import FastAPI, File, UploadFile
+from fastapi.responses import FileResponse
+from PIL import Image
+from realesrgan import RealESRGAN
+import torch
+import uuid
 import os
 
-os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
+app = FastAPI()
 
-from flask import Flask, request, send_file, jsonify
-from flask_cors import CORS
-from rembg import remove, new_session
-from PIL import Image
-import io
+# Create folders
+os.makedirs("uploads", exist_ok=True)
+os.makedirs("outputs", exist_ok=True)
 
-app = Flask(__name__)
-CORS(app)
+# Load model
+device = torch.device("cpu")  # Free Render compatible
+model = RealESRGAN(device, scale=4)
+model.load_weights("weights/realesr-general-x4v3.pth")
 
-# Lazy load session for Railway free plan
-session = None
-
-def get_session():
-    global session
-
-    if session is None:
-        session = new_session("u2netp")
-
-    return session
+MAX_SIZE = 1024
 
 
-@app.route('/')
-def home():
-    return "AJ Pixel Cut API Running 🚀"
+@app.post("/enhance")
+async def enhance_image(file: UploadFile = File(...)):
 
+    # Save upload
+    input_path = f"uploads/{uuid.uuid4()}.png"
 
-@app.route('/health')
-def health():
-    return jsonify({
-        "status": "running"
-    })
+    with open(input_path, "wb") as f:
+        f.write(await file.read())
 
+    # Open image
+    image = Image.open(input_path).convert("RGB")
 
-@app.route('/remove-bg', methods=['POST'])
-def remove_bg():
-    try:
-        if 'image' not in request.files:
-            return jsonify({"error": "No image uploaded"}), 400
+    # Original size save
+    original_width, original_height = image.size
 
-        file = request.files['image']
+    # Resize for processing if larger than 1024
+    process_image = image.copy()
 
-        input_image = Image.open(file.stream).convert("RGBA")
+    if max(process_image.size) > MAX_SIZE:
+        process_image.thumbnail((MAX_SIZE, MAX_SIZE))
 
-        output = remove(
-            input_image,
-            session=get_session()
-        )
+    # Enhance
+    sr_image = model.predict(process_image)
 
-        img_io = io.BytesIO()
-
-        output.save(
-            img_io,
-            format="PNG"
-        )
-
-        img_io.seek(0)
-
-        return send_file(
-            img_io,
-            mimetype='image/png'
-        )
-
-    except Exception as e:
-        return jsonify({
-            "error": str(e)
-        }), 500
-
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-
-    app.run(
-        host='0.0.0.0',
-        port=port
+    # Resize back to original size
+    sr_image = sr_image.resize(
+        (original_width, original_height),
+        Image.LANCZOS
     )
+
+    # Save output
+    output_path = f"outputs/{uuid.uuid4()}.png"
+    sr_image.save(output_path)
+
+    return FileResponse(output_path)
